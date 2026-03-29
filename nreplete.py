@@ -256,8 +256,8 @@ class NreplClient:
         timeout: float = 10.0
         ) -> dict:
         """
-        Send a message and wait for the first response with a matching 'id'.
-        Note: nREPL may send multiple messages for a single request; this returns the first match.
+        Send a message and wait for all responses until status contains 'done'.
+        Returns a merged dict of all received messages for this request.
         """
         if response_id is None:
             response_id = message.get('id')
@@ -265,13 +265,21 @@ class NreplClient:
             raise ValueError(
                 "Message must contain an 'id' field, or provide response_id."
                 )
-
         self.send_message(message)
-
+        accumulated = {}
         while True:
             received = self.receive_message(timeout=timeout)
             if received.get('id') == response_id:
-                return received
+                # Merge into accumulated, collecting 'out'/'err' as lists
+                for k, v in received.items():
+                    if k in ('out', 'err') and k in accumulated:
+                        accumulated[
+                            k
+                            ] += v  # concatenate successive out/err chunks
+                    else:
+                        accumulated[k] = v
+                if 'done' in received.get('status', []):
+                    return accumulated
 
     def evaluate(
         self,

@@ -168,9 +168,9 @@ class NreplClient:
                 index += 1  # consume 'e'
                 return result
 
-            elif token.isdigit():  # string: <length>:<data>
-                # token is the first digit, we need the whole length string
-                start = index - 1
+            elif 48 <= token <= 57:  # ASCII digit: string: <length>:<data>
+                # token is the first digit; we need the full length string
+                start = index - 1  # include the digit we already consumed
                 while index < buffer_len and buffer[index] != ord(':'):
                     index += 1
                 if index >= buffer_len:
@@ -180,7 +180,8 @@ class NreplClient:
                 length = int(length_str)
                 if index + length > buffer_len:
                     raise ValueError("Incomplete string data")
-                data = buffer[index:index + length]
+                # data = buffer[index:index + length]
+                data = bytes(buffer[index:index + length])
                 index += length
                 return data
 
@@ -190,9 +191,9 @@ class NreplClient:
         try:
             obj = parse()
             return obj, index
-        except ValueError as e:
+        except ValueError as err:
             # Re-raise with the original context
-            raise ValueError(f"Failed to decode bencode: {e}")
+            raise ValueError(f"Failed to decode bencode: {err}")
 
     @staticmethod
     def _bytes_to_strings(obj):
@@ -339,8 +340,9 @@ if __name__ == "__main__":
             )
         print("Evaluation result:", result)
 
-    except Exception as error:
-        print(f"Error: {error}")
+    except Exception as err:
+        logger.exception(err)
+        print(f"Error: {err}")
 
     finally:
         client.close()

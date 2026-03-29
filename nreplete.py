@@ -255,27 +255,30 @@ class NreplClient:
         Send a message and wait for all responses until status contains 'done'.
         Returns a merged dict of all received messages for this request.
         """
-        if response_id is None:
-            response_id = message.get('id')
-        if response_id is None:
+        if (
+            response_id :=
+            message.get('id') if response_id is None else response_id
+            ) is None:
             raise ValueError(
                 "Message must contain an 'id' field, or provide response_id."
                 )
         self.send_message(message)
-        accumulated = {}
+        messages_accumulated = {}
         while True:
             received = self.received_messages_queue.get(timeout=timeout)
             if received.get('id') == response_id:
-                # Merge into accumulated, collecting 'out'/'err' as lists
-                for k, v in received.items():
-                    if k in ('out', 'err') and k in accumulated:
-                        accumulated[
-                            k
-                            ] += v  # concatenate successive out/err chunks
+                # Merge into messages_accumulated, collecting 'out'/'err' as lists
+                for key, value in received.items():
+                    if key in (
+                        'out', 'err'
+                        ) and key in messages_accumulated:
+                        messages_accumulated[
+                            key
+                            ] += value  # concatenate successive out/err chunks
                     else:
-                        accumulated[k] = v
+                        messages_accumulated[key] = value
                 if 'done' in received.get('status', []):
-                    return accumulated
+                    return messages_accumulated
 
     def evaluate(
         self,

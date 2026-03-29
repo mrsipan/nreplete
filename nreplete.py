@@ -245,10 +245,6 @@ class NreplClient:
             logger.error(f"Failed to send message: {send_error}")
             raise
 
-    def receive_message(self, timeout: float = None) -> dict:
-        """Retrieve the next message from the received queue (blocking)."""
-        return self.received_messages_queue.get(timeout=timeout)
-
     def send_and_wait_for_response(
         self,
         message: dict,
@@ -268,7 +264,7 @@ class NreplClient:
         self.send_message(message)
         accumulated = {}
         while True:
-            received = self.receive_message(timeout=timeout)
+            received = self.received_messages_queue.get(timeout=timeout)
             if received.get('id') == response_id:
                 # Merge into accumulated, collecting 'out'/'err' as lists
                 for k, v in received.items():

@@ -77,16 +77,16 @@ class NreplClient:
         """
         while not self.stop_reader_event.is_set():
             try:
-                chunk = self.socket_connection.recv(4096)
-                if not chunk:
+                chk = self.socket_connection.recv(4096)
+                if not chk:
                     logger.warning("Socket connection closed by peer.")
                     break
-                self.receive_buffer.extend(chunk)
+                self.receive_buffer.extend(chk)
 
                 # Attempt to extract complete messages from the buffer
                 while True:
                     try:
-                        decoded_message, bytes_consumed = self._decode_one_bencode(
+                        decoded_message, bytes_consumed = self._decode_1_bencode(
                             self.receive_buffer
                             )
                         # Remove the consumed bytes from the buffer
@@ -117,7 +117,7 @@ class NreplClient:
         logger.info("Reader loop terminated.")
 
     @staticmethod
-    def _decode_one_bencode(buffer: bytes):
+    def _decode_1_bencode(buffer: bytes):
         """
         Parse a single bencode message from the beginning of a bytes buffer.
         Returns a tuple (decoded_object, bytes_consumed).
@@ -199,7 +199,7 @@ class NreplClient:
     def _bytes_to_strings(obj):
         """Recursively convert all bytes objects in a decoded structure to UTF-8 strings."""
         if isinstance(obj, bytes):
-            return obj.decode('utf-8')
+            return obj.decode('utf-8', errors='replace')
         elif isinstance(obj, dict):
             return {
                 NreplClient._bytes_to_strings(k):
@@ -265,19 +265,21 @@ class NreplClient:
         self.send_message(message)
         messages_accumulated = {}
         while True:
-            received = self.received_messages_queue.get(timeout=timeout)
-            if received.get('id') == response_id:
+            msg_received = self.received_messages_queue.get(
+                timeout=timeout
+                )
+            if msg_received.get('id') == response_id:
                 # Merge into messages_accumulated, collecting 'out'/'err' as lists
-                for key, value in received.items():
+                for key, value in msg_received.items():
                     if key in (
                         'out', 'err'
                         ) and key in messages_accumulated:
                         messages_accumulated[
                             key
-                            ] += value  # concatenate successive out/err chunks
+                            ] += value  # concatenate successive out/err chks
                     else:
                         messages_accumulated[key] = value
-                if 'done' in received.get('status', []):
+                if 'done' in msg_received.get('status', []):
                     return messages_accumulated
 
     def evaluate(
@@ -332,9 +334,10 @@ class NreplClient:
 
 # Example usage
 if __name__ == "__main__":
-    client = NreplClient("localhost", 7888)
+    client = NreplClient("localhost", 3232)
 
     try:
+        print('starting')
         client.connect()
         description = client.describe()
         print("Server description:", description)
@@ -346,6 +349,18 @@ if __name__ == "__main__":
             "(println \"Hello from nREPL client!\")"
             )
         print("Evaluation result:", result)
+
+        print('otro')
+        print(
+            client.evaluate(
+                """(require '[clojure.string :as x]) (x/split "ddd a as df" #" ")"""
+                )
+            )
+        print('otro mas')
+        print(client.evaluate('(x/split "holas que tal" #" ")'))
+        print(client.evaluate('(x/split "asdf www eee rr" #" ")'))
+        print(client.evaluate('(defn f [x] (* x x))'))
+        print(client.evaluate('(println (f 9))'))
 
     except Exception as err:
         logger.exception(err)

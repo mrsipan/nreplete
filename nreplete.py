@@ -123,39 +123,39 @@ class NreplClient:
         Returns a tuple (decoded_object, bytes_consumed).
         Raises ValueError if the buffer does not contain a complete valid message.
         """
-        index = 0
+        idx = 0
         buffer_len = len(buffer)
 
         def parse():
-            nonlocal index
-            if index >= buffer_len:
+            nonlocal idx
+            if idx >= buffer_len:
                 raise ValueError("Incomplete data")
 
-            token = buffer[index]
-            index += 1
+            token = buffer[idx]
+            idx += 1
 
             if token == ord('i'):  # integer: i<number>e
-                start = index
-                while index < buffer_len and buffer[index] != ord('e'):
-                    index += 1
-                if index >= buffer_len:
+                start = idx
+                while idx < buffer_len and buffer[idx] != ord('e'):
+                    idx += 1
+                if idx >= buffer_len:
                     raise ValueError("Incomplete integer")
-                number_str = buffer[start:index].decode('utf-8')
-                index += 1  # consume 'e'
-                return int(number_str)
+                number_string = buffer[start:idx].decode('utf-8')
+                idx += 1  # consume 'e'
+                return int(number_string)
 
             elif token == ord('l'):  # list: l...e
                 result = []
-                while index < buffer_len and buffer[index] != ord('e'):
+                while idx < buffer_len and buffer[idx] != ord('e'):
                     result.append(parse())
-                if index >= buffer_len:
+                if idx >= buffer_len:
                     raise ValueError("Incomplete list")
-                index += 1  # consume 'e'
+                idx += 1  # consume 'e'
                 return result
 
             elif token == ord('d'):  # dictionary: d...e
                 result = {}
-                while index < buffer_len and buffer[index] != ord('e'):
+                while idx < buffer_len and buffer[idx] != ord('e'):
                     key = parse()
                     if not isinstance(key, bytes):
                         raise ValueError(
@@ -163,26 +163,26 @@ class NreplClient:
                             )
                     value = parse()
                     result[key] = value
-                if index >= buffer_len:
+                if idx >= buffer_len:
                     raise ValueError("Incomplete dictionary")
-                index += 1  # consume 'e'
+                idx += 1  # consume 'e'
                 return result
 
             elif 48 <= token <= 57:  # ASCII digit: string: <length>:<data>
                 # token is the first digit; we need the full length string
-                start = index - 1  # include the digit we already consumed
-                while index < buffer_len and buffer[index] != ord(':'):
-                    index += 1
-                if index >= buffer_len:
+                start = idx - 1  # include the digit we already consumed
+                while idx < buffer_len and buffer[idx] != ord(':'):
+                    idx += 1
+                if idx >= buffer_len:
                     raise ValueError("Incomplete string length")
-                length_str = buffer[start:index].decode('utf-8')
-                index += 1  # consume ':'
+                length_str = buffer[start:idx].decode('utf-8')
+                idx += 1  # consume ':'
                 length = int(length_str)
-                if index + length > buffer_len:
+                if idx + length > buffer_len:
                     raise ValueError("Incomplete string data")
-                # data = buffer[index:index + length]
-                data = bytes(buffer[index:index + length])
-                index += length
+                # data = buffer[idx:idx + length]
+                data = bytes(buffer[idx:idx + length])
+                idx += length
                 return data
 
             else:
@@ -190,10 +190,11 @@ class NreplClient:
 
         try:
             obj = parse()
-            return obj, index
         except ValueError as err:
             # Re-raise with the original context
             raise ValueError(f"Failed to decode bencode: {err}")
+        else:
+            return obj, idx
 
     @staticmethod
     def _bytes_to_strings(obj):
@@ -235,8 +236,8 @@ class NreplClient:
                 )
 
         # Convert strings to bytes (bencode2 can handle strings, but we do it for consistency)
-        message_bytes = self._strings_to_bytes(message)
-        data_to_send = bencode2.bencode(message_bytes)
+        msg_bytes = self._strings_to_bytes(message)
+        data_to_send = bencode2.bencode(msg_bytes)
 
         try:
             self.socket_connection.sendall(data_to_send)

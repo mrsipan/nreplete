@@ -247,41 +247,40 @@ class NreplClient:
             raise
 
     def send_and_wait_for_response(
-        self,
-        message: dict,
-        response_id: str = None,
-        timeout: float = 10.0
-        ) -> dict:
-        """
-        Send a message and wait for all responses until status contains 'done'.
-        Returns a merged dict of all received messages for this request.
-        """
-        if (
-            response_id :=
-            message.get('id') if response_id is None else response_id
-            ) is None:
-            raise ValueError(
-                "Message must contain an 'id' field, or provide response_id."
-                )
+        self, message, response_id=None, timeout=10.0
+        ):
         self.send_message(message)
-        messages_accumulated = {}
+        accumulated = {
+            'id': response_id,
+            'out': '',
+            'err': '',
+            'value': 'nil'
+            }
+
         while True:
-            msg_received = self.received_messages_queue.get(
-                timeout=timeout
-                )
-            if msg_received.get('id') == response_id:
-                # Merge into messages_accumulated, collecting 'out'/'err' as lists
-                for key, value in msg_received.items():
-                    if key in (
-                        'out', 'err'
-                        ) and key in messages_accumulated:
-                        messages_accumulated[
-                            key
-                            ] += value  # concatenate successive out/err chks
-                    else:
-                        messages_accumulated[key] = value
-                if 'done' in msg_received.get('status', []):
-                    return messages_accumulated
+            try:
+                msg = self.received_messages_queue.get(timeout=timeout)
+
+                if msg.get('id') == response_id:
+                    # Stream output live
+                    if 'out' in msg:
+                        print(msg['out'], end="", flush=True)
+                        accumulated['out'] += msg['out']
+
+                    if 'err' in msg:
+                        accumulated['err'] += msg['err']
+
+                    # Store the value
+                    if 'value' in msg and msg['value'] is not None:
+                        accumulated['value'] = msg['value']
+
+                    # Exit gracefully
+                    if 'status' in msg and 'done' in msg['status']:
+                        return accumulated
+
+            except queue.Empty:
+                # Failsafe if the browser is closed or network drops
+                return accumulated
 
     def evaluate(
         self,
@@ -335,13 +334,13 @@ class NreplClient:
 
 # Example usage
 if __name__ == "__main__":
-    client = NreplClient("localhost", 3232)
+    client = NreplClient("localhost", 7888)
 
     try:
         print('starting')
         client.connect()
-        description = client.describe()
-        print("Server description:", description)
+        # description = client.describe()
+        # print("Server description:", description)
 
         result = client.evaluate("(+ 1 2 3)")
         print("Evaluation result:", result)
@@ -354,12 +353,29 @@ if __name__ == "__main__":
         print('otro')
         print(
             client.evaluate(
-                """(require '[clojure.string :as x]) (x/split "ddd a as df" #" ")"""
+                """
+            ;(require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as yy])
+;; 1. Run the require
+(require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as x])
+
+;; 2. Use the alias 'x'
+(println (x/split "clojure,squint,js" #","))
+;; => ["clojure" "squint" "js"]
+
+(println (x/upper_case "hello"))
+;; => "HELLO"
+
+
+            """
                 )
             )
-        print('otro mas')
-        print(client.evaluate('(x/split "holas que tal" #" ")'))
-        print(client.evaluate('(x/split "asdf www eee rr" #" ")'))
+        # client.evaluate(
+        #     """(require '[clojure.string :as ww]) (ww/split "ddd a as df" #" ")"""
+        #     )
+
+        # print('otro mas')
+        # print(client.evaluate('(ww/split "holas que tal" #" ")'))
+        # print(client.evaluate('(ww/split "asdf www eee rr" #" ")'))
         print(client.evaluate('(defn f [x] (* x x))'))
         print(client.evaluate('(println (f 9))'))
 

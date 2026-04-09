@@ -1,3 +1,4 @@
+import collections
 import logging
 import queue
 import socket
@@ -75,44 +76,29 @@ class NreplClient:
         Background thread: reads data, extracts complete bencode messages,
         converts bytes to strings, and puts them into the queue.
         """
-        while not self.stop_reader_event.is_set():
-            try:
-                chk = self.socket_connection.recv(4096)
-                if not chk:
-                    logger.warning("Socket connection closed by peer.")
-                    break
-                self.receive_buffer.extend(chk)
+        def error_cnx():
+            logger.error('socket disconnected')
+            raise Exception('socket disconnected')
 
-                # Attempt to extract complete messages from the buffer
-                while True:
-                    try:
-                        decoded_message, bytes_consumed = self._decode_1_bencode(
-                            self.receive_buffer
-                            )
-                        # Remove the consumed bytes from the buffer
-                        self.receive_buffer = self.receive_buffer[
-                            bytes_consumed:]
-                        # Convert all bytes in the message to UTF-8 strings
-                        message = self._bytes_to_strings(
-                            decoded_message
-                            )
-                        self.received_messages_queue.put(message)
-                        logger.debug(f"Received message: {message}")
-                    except ValueError as parse_error:
-                        # Not enough data or invalid message; wait for more
-                        break
-            except socket.timeout:
-                continue
-            except socket.error as socket_error:
-                logger.error(
-                    f"Socket error in reader loop: {socket_error}"
-                    )
-                break
-            except Exception as unexpected_error:
-                logger.exception(
-                    f"Unexpected error in reader loop: {unexpected_error}"
-                    )
-                break
+        while not self.stop_reader_event.is_set():
+            chk = chk if (chk := self.socket_connection.recv(4096)
+                         ) else error_cnx()
+            self.receive_buffer.extend(chk)
+
+            # Attempt to extract complete messages from the buffer
+            while True:
+                try:
+                    decoded_message, bytes_consumed = self._decode_1_bencode(
+                        self.receive_buffer
+                        )
+                except Exception:
+                    break
+                self.receive_buffer = self.receive_buffer[
+                    bytes_consumed:]
+                # Convert all bytes in the message to UTF-8 strings
+                message = self._bytes_to_strings(decoded_message)
+                self.received_messages_queue.put(message)
+                logger.debug(f"Received message: {message}")
 
         logger.info("Reader loop terminated.")
 
@@ -230,6 +216,7 @@ class NreplClient:
 
     def send_message(self, message: dict) -> None:
         """Send a bencode-encoded message to the server."""
+
         if not self.socket_connection:
             raise RuntimeError(
                 "Not connected to server. Call connect() first."
@@ -247,40 +234,48 @@ class NreplClient:
             raise
 
     def send_and_wait_for_response(
-        self, message, response_id=None, timeout=10.0
+        self, message, response_id=None, timeout=30.0
         ):
         self.send_message(message)
-        accumulated = {
-            'id': response_id,
-            'out': '',
-            'err': '',
-            'value': 'nil'
-            }
+        d1 = {'out': [''], 'err': [''], 'value': ['nil']}
+        acc = collections.defaultdict(list, d1)
 
         while True:
             try:
                 msg = self.received_messages_queue.get(timeout=timeout)
-
-                if msg.get('id') == response_id:
-                    # Stream output live
-                    if 'out' in msg:
-                        print(msg['out'], end="", flush=True)
-                        accumulated['out'] += msg['out']
-
-                    if 'err' in msg:
-                        accumulated['err'] += msg['err']
-
-                    # Store the value
-                    if 'value' in msg and msg['value'] is not None:
-                        accumulated['value'] = msg['value']
-
-                    # Exit gracefully
-                    if 'status' in msg and 'done' in msg['status']:
-                        return accumulated
-
             except queue.Empty:
                 # Failsafe if the browser is closed or network drops
-                return accumulated
+                print('empty queue')
+                return acc
+
+            print(msg)
+
+            if msg.get('id') == response_id:
+                # Stream output live
+                if 'out' in msg:
+                    acc['out'].append(msg['out'])
+
+                if 'err' in msg:
+                    acc['err'].append(msg['err'])
+
+                # Store the value
+                if 'value' in msg:
+                    acc['value'].append(msg['value'])
+
+                if 'ex' in msg and msg['ex']:
+                    # acc['ex'] = msg['ex']
+                    return {
+                        key: '\n'.join(value)
+                        for key, value in acc.items()
+                        } | {
+                            'ex': msg['ex']
+                            }
+
+                if 'status' in msg and 'done' in msg['status']:
+                    return {
+                        key: '\n'.join(value)
+                        for key, value in acc.items()
+                        }
 
     def evaluate(
         self,
@@ -289,7 +284,7 @@ class NreplClient:
         namespace: str = None,
         file_name: str = None,
         line_number: int = None,
-        column_number: int = None
+        column_number: int = None,
         ) -> dict:
         """
         Send an 'eval' operation and wait for the result.
@@ -342,33 +337,93 @@ if __name__ == "__main__":
         # description = client.describe()
         # print("Server description:", description)
 
-        result = client.evaluate("(+ 1 2 3)")
-        print("Evaluation result:", result)
+        # result = client.evaluate("(+ 1 2 3)")
+        # print("Evaluation result:", result)
 
-        result = client.evaluate(
-            "(println \"Hello from nREPL client!\")"
-            )
-        print("Evaluation result:", result)
+        # result = client.evaluate(
+        #     "(println \"Hello from nREPL client!\")"
+        #     )
+        # print("Evaluation result:", result)
+
+        # client.evaluate(
+        #     '''
+        #     (require '[squint.string :as str])
+        #         (defn ip-to-int [ip-str]
+        # (let [parts (str/split ip-str ".")
+        # [a b c d] (map #(js/parseInt % 10) parts)]
+        # (+ (* a 256 256 256) (* b 256 256) (* c 256) d)))
+
+        #         '''
+        #     )
+
+        # print(
+        #     client.evaluate(
+        #         """
+        # (ns app.core)
+
+        # ;; IP calculation utilities
+        # (defn ip-to-int [ip-str]
+        # (let [parts (str/split ip-str ".")
+        # [a b c d] (map #(js/parseInt % 10) parts)]
+        # (+ (* a 256 256 256) (* b 256 256) (* c 256) d)))
+
+        # (defn int-to-ip [n]
+        # (let [a (bit-and (bit-shift-right n 24) 0xFF)
+        # b (bit-and (bit-shift-right n 16) 0xFF)
+        # c (bit-and (bit-shift-right n 8) 0xFF)
+        # d (bit-and n 0xFF)]
+        # (str a "." b "." c "." d)))
+
+        # (defn cidr-to-mask [cidr]
+        # (let [mask (- (bit-shift-left 1 32) 1)
+        # network-mask (bit-shift-left mask (- 32 cidr))]
+        # network-mask))
+
+        # (defn mask-to-cidr [mask-int]
+        # (let [bits (bit-count mask-int)]
+        # bits))
+
+        # ;; Test
+        # (prn "Testing IP conversion:" (ip-to-int "192.168.1.1"))
+        # (prn "Int to IP:" (int-to-ip 3232235777))
+        # (prn "CIDR 24 mask:" (int-to-ip (cidr-to-mask 24)))
+        # (prn "Mask to CIDR:" (mask-to-cidr (cidr-to-mask 24)))
+
+        #             """
+        #         )
+        #     )
 
         print('otro')
         print(
             client.evaluate(
-                """
-            ;(require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as yy])
-;; 1. Run the require
-(require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as x])
+                '''
+                (require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as str])
+                (str/split "clojure ,another|    squint js" #",")
+                ;(.split "clojure another r| squint js" "|")
+                (prn {:a 2 :b 3})
 
-;; 2. Use the alias 'x'
-(println (x/split "clojure,squint,js" #","))
-;; => ["clojure" "squint" "js"]
-
-(println (x/upper_case "hello"))
-;; => "HELLO"
-
-
-            """
+                '''
                 )
             )
+        # print(
+        #     client.evaluate(
+        #         """
+        #     ;; 1. Run the require
+        #     ;(require '["https://unpkg.com/squint-cljs/src/squint/string.js" :as str])
+
+        #     (str/upper-case "hola que tal")
+        #     (str/lower-case "WEEEE")
+
+        #     ;; 2. Use the alias 'str'
+        #     ;;(str/split "clojure,squint,js" #",")
+        #     ;; => ["clojure" "squint" "js"]
+
+        #     (println (str/upper_case "hello"))
+        #     ;; => "HELLO"
+
+        #     """
+        #         )
+        #     )
         # client.evaluate(
         #     """(require '[clojure.string :as ww]) (ww/split "ddd a as df" #" ")"""
         #     )
